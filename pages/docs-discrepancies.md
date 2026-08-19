@@ -21,6 +21,7 @@ Lint 操作で見つけた食い違いはここに追記する（解消された
 | 4 | 未報告 | `docs/clustering.md` に `Offline` 状態が未記載（実装 `clustering/status.go` には存在） |
 | 5 | 未報告 | `spec.maxDelaySecondsForPodDeletion` と `moco.cybozu.com/prevent-delete` アノテーション: 実装 + e2e（`e2e/prevent_delete_test.go`）はあるが docs に解説ページが無い |
 | 9 | 未報告 | `docs/metrics.md` は moco_cluster_* の全メトリクスに `name`/`namespace` ラベルがあると記載だが、`moco_cluster_partition_update_retries_total` だけラベルが `namespace` のみ（`pkg/metrics/metrics.go#Register` の PartitionUpdateRetriesTotalVec） |
+| 10 | 報告済み ([PR#903 レビューコメント](https://github.com/cybozu-go/moco/pull/903#discussion_r3810879340)) | 生成 doc `docs/crd_mysqlcluster_v1beta2.md` で `status.backup` / `status.reconcileInfo` / `backup.uuidSet` / `reconcileInfo.reconcileVersion` の Required 列が **true** になっている。実際は型定義で `+optional`（`api/v1beta2/mysqlcluster_types.go#MySQLClusterStatus`）。json タグに `omitempty` が無いフィールドを doc 生成ツールが必須と判定するのが原因 |
 
 ## cybozu-go/moco-agent
 

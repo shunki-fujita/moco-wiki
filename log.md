@@ -2,6 +2,10 @@
 
 追記専用の操作記録。新しいエントリを先頭に足す。形式は [schema](CLAUDE.md) 参照。
 
+## 2026-08-19 | query | 食い違い #10 を追加（生成 CRD doc の Required 誤表示）
+
+ユーザ提供の [PR#903 レビューコメント](https://github.com/cybozu-go/moco/pull/903#discussion_r3810879340)をソースで検証し、[docs-discrepancies](pages/docs-discrepancies.md) に #10 として追記（`+optional` なのに json タグに `omitempty` が無く、生成 doc で Required=true になる 4 フィールド）。
+
 ## 2026-08-19 | query+lint | カバレッジ調査に基づき 5 ページ追加・7 ページ増補
 
 「他に書くことは無いか」の調査から、ソースにあって wiki に無かった領域を追加。

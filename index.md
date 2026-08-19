@@ -35,4 +35,4 @@
 ## Synthesis
 
 - [security](pages/security.md) — mTLS 証明書チェーン、パスワード管理、RBAC、脆弱性報告ポリシーの横断ガイド
-- [docs-discrepancies](pages/docs-discrepancies.md) — 公式 docs とソースの食い違い一覧（9 件、upstream PR 候補）
+- [docs-discrepancies](pages/docs-discrepancies.md) — 公式 docs とソースの食い違い一覧（10 件、upstream PR 候補）
