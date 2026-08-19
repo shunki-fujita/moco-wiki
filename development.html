@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>開発とテスト — MOCO Wiki</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script type="module" src="assets/wiki.js"></script>
+</head>
+<body>
+<div class="app">
+<nav class="sidebar">
+  <div class="brand">
+    <a href="index.html"><div class="name">MOCO<span class="dot">.</span>wiki</div></a>
+    <div class="sub">llm-generated from source</div>
+  </div>
+  <div class="nav-group">User Guide</div>
+  <a class="nav" href="index.html">概要</a>
+  <a class="nav" href="architecture.html">アーキテクチャ</a>
+  <a class="nav" href="crd.html">CRD リファレンス</a>
+  <div class="nav-group">Internals</div>
+  <a class="nav" href="clustering.html">クラスタリングと failover</a>
+  <a class="nav" href="reconcile.html">Reconcile の仕組み</a>
+  <a class="nav" href="backup.html">バックアップとリストア</a>
+  <a class="nav" href="pod.html">Pod と my.cnf</a>
+  <a class="nav" href="moco-agent.html">moco-agent</a>
+  <div class="nav-group">Operations</div>
+  <a class="nav" href="operations.html">運用ノート</a>
+  <div class="nav-group">Development</div>
+  <a class="nav active" href="development.html">開発とテスト</a>
+  <div class="meta">
+    <a href="https://github.com/cybozu-go/moco">cybozu-go/moco</a> @ main<br>
+    <a href="https://github.com/cybozu-go/moco-agent">moco-agent</a> @ main<br>
+    generated 2026-08-19
+  </div>
+</nav>
+
+<main><div class="content">
+  <p class="eyebrow">Development</p>
+  <h1>開発・テスト・デプロイ</h1>
+  <p class="lede">MOCO のテスト構成、リリースフロー、インストール方法。ツールは aqua で管理され、全コミットに DCO の <code>Signed-off-by</code> が必要です。</p>
+
+  <h2>インストール</h2>
+  <p><strong>cert-manager が必須</strong>です（admission webhook 用証明書 + controller ↔ agent の gRPC mTLS 用 CA）。</p>
+  <pre class="block"><code># 方法 A: 生マニフェスト
+kubectl apply -f https://github.com/cybozu-go/moco/releases/latest/download/moco.yaml
+
+# 方法 B: Helm
+helm repo add moco https://cybozu-go.github.io/moco/
+helm install --create-namespace --namespace moco-system moco moco/moco</code></pre>
+  <p>Helm の主要 values: <code>replicaCount</code>(2), <code>crds.enabled</code>(true, uninstall しても <code>resource-policy: keep</code> で CRD は残る), <code>monitoring.enabled</code>(PodMonitor ×3), <code>agent.image.tag</code> / <code>fluentbit.image.tag</code> / <code>mysqldExporter.image.tag</code>（サイドカーのイメージを差し替え可）, <code>extraArgs</code>。<strong>チャートは MOCO 本体と独立にバージョニング</strong>されます（chart 0.26.0 / app 0.36.0）。</p>
+
+  <h2>テストの 4 層</h2>
+  <div class="tablewrap"><table>
+    <tr><th>層</th><th>コマンド</th><th>内容</th></tr>
+    <tr><td>単体</td><td><code>make test</code></td><td>MySQL/K8s 非依存。<code>go test -race ./pkg/...</code> + vet + gofmt</td></tr>
+    <tr><td>MySQL 依存</td><td><code>make test-dbop</code> / <code>make test-bkop</code></td><td>Docker で実 MySQL を立てて pkg/dbop・pkg/bkop を検証。<code>MYSQL_VERSION</code> で対象バージョン切替。bkop は mysqlsh が必要（<code>make setup</code>）</td></tr>
+    <tr><td>envtest</td><td><code>make envtest</code></td><td>clustering / controllers / api (webhook) / backup の 4 サブターゲット。<code>MOCO_CHECK_INTERVAL=100ms</code> 等で高速化。<code>FOCUS=...</code> で ginkgo focus</td></tr>
+    <tr><td>E2E</td><td><code>cd e2e && make start && make test</code></td><td>kind + cert-manager + MinIO / fake-gcs-server / Azurite。<code>ginkgo --procs 5 --timeout 90m</code></td></tr>
+  </table></div>
+  <pre class="block"><code>cd e2e
+make start                 # kind クラスタ + イメージビルド/ロード + MOCO デプロイ
+make test                  # 本体 (RUN_E2E=1)
+make test-upgrade          # 8.0.28 → 8.4 のアップグレードテスト (UPGRADE=1)
+make start AGENT_DIR=path  # 未リリースの moco-agent を組み込んでテスト
+make logs && make stop</code></pre>
+  <p>E2E スイートは lifecycle / replication / failover / switchover / stop / offline / partition / pvc / prevent_delete / backup (S3, TLS, GCS, Azure) / upgrade をカバーしています<span class="src">e2e/*_test.go</span>。</p>
+
+  <h2>コード生成</h2>
+  <p><code>make manifests</code>（CRD/RBAC/webhook → kustomize → Helm チャートの <code>templates/generated/</code> まで再生成）、<code>make generate</code>（deepcopy）、<code>make apidoc</code>（<code>docs/crd_*.md</code>）。CI は <code>make check-generate</code> で生成物の差分をエラーにします。</p>
+
+  <h2>リリースフロー</h2>
+  <div class="tablewrap"><table>
+    <tr><th>対象</th><th>手順</th></tr>
+    <tr><td>MOCO 本体</td><td><code>version.go</code> と <code>kustomization.yaml</code> のバージョン更新 + CHANGELOG → PR → merge → <code>v&lt;X.Y.Z&gt;</code> タグ push でリリース CI 発火</td></tr>
+    <tr><td>Helm チャート</td><td>本体と独立。<code>Chart.yaml</code> / <code>values.yaml</code> の tag を sed で更新 → <code>chart-v&lt;ver&gt;</code> タグ push</td></tr>
+    <tr><td>コンテナ (mysql / fluent-bit / mysqld_exporter)</td><td><code>containers/&lt;name&gt;/&lt;ver&gt;/TAG</code> を編集して main にマージするとリリース。<strong>TAG を変えないと Dockerfile を変えてもリリースされない</strong>。タグは <code>&lt;upstream 版&gt;.&lt;イメージ版&gt;</code>（例 8.4.8.1）</td></tr>
+    <tr><td>moco-agent</td><td>別リポジトリでリリース → moco 側で <code>go get github.com/cybozu-go/moco-agent@latest</code>（<code>--agent-image</code> の既定値は go.mod から解決される）</td></tr>
+  </table></div>
+
+  <h2>サポートバージョン（CI マトリクス）</h2>
+  <p>MySQL: 8.0.28 / 8.0.43 / 8.0.44 / 8.0.45 / 8.4.4 / 8.4.8（LTS のみ。Innovation release は未テスト）。Kubernetes: 1.33 / 1.34 / 1.35。k8s 1.35 では v1.35.4 以降か <code>MaxUnavailableStatefulSet</code> feature gate の無効化が必要（kubernetes#137409）<span class="src">.github/workflows/ci.yaml, README.md</span>。</p>
+
+  <h2>ソースと docs の食い違い（この wiki が見つけたもの）</h2>
+  <p>ソースコードを正としてドキュメントと突き合わせた結果、以下の乖離があります。upstream への PR 候補です。</p>
+  <ul>
+    <li><code>docs/customize-system-container.md</code>: 「runAsUser=1000」と記載だが実装は <strong>10000</strong>（<code>pkg/constants/container.go</code>）</li>
+    <li><code>docs/moco-controller.md</code>: フラグ既定値のイメージバージョン表記が現行値（agent 0.16.0 / fluent-bit 5.0.2.1 / exporter 0.19.0.1）と不一致</li>
+    <li><code>docs/install-plugin.md</code>: kubectl-moco のヘルプ例に <code>start</code> / <code>stop</code> サブコマンドが無い</li>
+    <li><code>docs/clustering.md</code>: <code>Offline</code> 状態が未記載</li>
+    <li><code>spec.maxDelaySecondsForPodDeletion</code> と <code>prevent-delete</code> アノテーション: 実装 + e2e はあるが docs に解説が無い</li>
+    <li>moco-agent の <code>docs/moco-agent.md</code>: 環境変数表に <code>EXPORTER_PASSWORD</code> / <code>BACKUP_PASSWORD</code> が欠落、<code>--mysqld-localhost</code> フラグが未記載、存在しない <code>--logfile</code> 等が記載</li>
+  </ul>
+
+  <div class="pagefoot">source: <a href="https://github.com/cybozu-go/moco/blob/main/DEVELOP.md">DEVELOP.md</a> · <a href="https://github.com/cybozu-go/moco/blob/main/e2e/README.md">e2e/README.md</a> · <a href="https://github.com/cybozu-go/moco/blob/main/RELEASE.md">RELEASE.md</a> · <a href="https://github.com/cybozu-go/moco/tree/main/charts/moco">charts/moco/</a> · <a href="https://github.com/cybozu-go/moco/blob/main/docs/setup.md">docs/setup.md</a></div>
+</div></main>
+</div>
+</body>
+</html>

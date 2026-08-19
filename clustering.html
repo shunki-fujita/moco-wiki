@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>クラスタリングと failover — MOCO Wiki</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script type="module" src="assets/wiki.js"></script>
+</head>
+<body>
+<div class="app">
+<nav class="sidebar">
+  <div class="brand">
+    <a href="index.html"><div class="name">MOCO<span class="dot">.</span>wiki</div></a>
+    <div class="sub">llm-generated from source</div>
+  </div>
+  <div class="nav-group">User Guide</div>
+  <a class="nav" href="index.html">概要</a>
+  <a class="nav" href="architecture.html">アーキテクチャ</a>
+  <a class="nav" href="crd.html">CRD リファレンス</a>
+  <div class="nav-group">Internals</div>
+  <a class="nav active" href="clustering.html">クラスタリングと failover</a>
+  <a class="nav" href="reconcile.html">Reconcile の仕組み</a>
+  <a class="nav" href="backup.html">バックアップとリストア</a>
+  <a class="nav" href="pod.html">Pod と my.cnf</a>
+  <a class="nav" href="moco-agent.html">moco-agent</a>
+  <div class="nav-group">Operations</div>
+  <a class="nav" href="operations.html">運用ノート</a>
+  <div class="nav-group">Development</div>
+  <a class="nav" href="development.html">開発とテスト</a>
+  <div class="meta">
+    <a href="https://github.com/cybozu-go/moco">cybozu-go/moco</a> @ main<br>
+    <a href="https://github.com/cybozu-go/moco-agent">moco-agent</a> @ main<br>
+    generated 2026-08-19
+  </div>
+</nav>
+
+<main><div class="content">
+  <p class="eyebrow">Internals</p>
+  <h1>クラスタリングと failover</h1>
+  <p class="lede">MOCO は状態機械を「保存」しません。ClusterManager が毎サイクル全インスタンスの状態を集めて状態を<strong>再計算</strong>し、状態に応じた操作を実行する level-triggered な設計です。</p>
+
+  <h2>維持ループ</h2>
+  <p>ClusterManager は MySQLCluster ごとに goroutine（<code>managerProcess</code>）を 1 本起動し、<code>--check-interval</code>（既定 1 分）ごと、またはイベント（Pod 変化、reconcile 完了）を契機に 1 サイクルを回します。操作を行った場合は <code>redo</code> として即座に次サイクルが走ります<span class="src">clustering/manager.go, process.go#Start</span>。</p>
+  <pre class="block"><code>do():  GatherStatus       全 mysqld から並列に状態収集（失敗は 3 秒間隔で最大 3 回試行）
+       DecideState        クラスタ状態を判定
+       updateStatus       status / conditions / メトリクス更新
+       PreventPodDeletion レプリカ遅延超過なら primary に prevent-delete アノテーション
+       操作               状態に応じて switchover / failover / configure / clone</code></pre>
+  <p class="src">clustering/process.go#do</p>
+
+  <h2>収集する情報</h2>
+  <p>各 mysqld の admin ポート (33062) に接続し、グローバル変数（<code>server_uuid</code>, <code>gtid_executed</code>, <code>gtid_purged</code>, <code>read_only</code>, <code>super_read_only</code>, semi-sync 変数）、<code>SHOW REPLICAS</code> / <code>SHOW REPLICA STATUS</code>、<code>performance_schema.clone_status</code>、<code>Rpl_semi_sync_master_wait_sessions</code> を取得します。primary は 100ms 待って再取得し、その <code>gtid_executed</code> を基準値にします<span class="src">clustering/status.go#GatherStatus, pkg/dbop/status.go</span>。</p>
+
+  <h2>8 つのクラスタ状態</h2>
+  <div class="tablewrap"><table>
+    <tr><th>状態</th><th>意味</th><th>実行される操作</th></tr>
+    <tr><td><span class="pill ok">Healthy</span></td><td>全 Pod Ready、全レプリカが errant なし・super_read_only・primary に接続済み、<code>SHOW REPLICAS</code> のクラスタ内レプリカ数が replicas−1 に完全一致</td><td>必要なら switchover</td></tr>
+    <tr><td><span class="pill">Cloning</span></td><td>外部 MySQL からの初回 CLONE 中（intermediate primary）</td><td>clone 実行 / 完了待ち</td></tr>
+    <tr><td><span class="pill">Restoring</span></td><td>バックアップからのリストア中</td><td>何もしない</td></tr>
+    <tr><td><span class="pill">Degraded</span></td><td>primary は書き込み可能だが一部レプリカに問題（半数以上は正常）</td><td>switchover または configure</td></tr>
+    <tr><td><span class="pill bad">Failed</span></td><td>primary 死亡 or データ喪失 + 正常レプリカが<strong>過半数</strong></td><td><strong>failover</strong></td></tr>
+    <tr><td><span class="pill bad">Lost</span></td><td>primary 死亡 + 正常レプリカが半数以下。<strong>自動復旧不能</strong></td><td>何もできない（リストアが必要）</td></tr>
+    <tr><td><span class="pill">Incomplete</span></td><td>上記以外（初期構築中など）</td><td>configure</td></tr>
+    <tr><td><span class="pill">Offline</span></td><td><code>spec.offline: true</code>。判定は<strong>最優先</strong></td><td>何もしない</td></tr>
+  </table></div>
+  <p class="src">clustering/status.go#DecideState（判定順: Offline → Cloning → Restoring → Healthy → Degraded → Failed → Lost → Incomplete）。Offline 状態は docs/clustering.md には未記載（コードのみ）</p>
+
+  <h2>状態遷移</h2>
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Cloning: replicationSourceSecretName あり
+    [*] --> Restoring: spec.restore あり
+    [*] --> Incomplete: それ以外
+
+    Cloning --> Incomplete: CLONE 完了
+    Restoring --> Incomplete: restoredTime セット
+
+    Incomplete --> Healthy: configure() 成功
+    Incomplete --> Degraded: 半数以上のレプリカが正常
+
+    Healthy --> Healthy: switchover (primary が Terminating / demote)
+    Healthy --> Degraded: レプリカ障害 / errant / hangup 検出
+    Healthy --> Failed: primary ダウン + 正常レプリカ > replicas/2
+    Healthy --> Lost: primary ダウン + 正常レプリカ <= replicas/2
+
+    Degraded --> Healthy: configure() で全レプリカ復旧
+    Degraded --> Failed: primary ダウン + 過半数正常
+    Degraded --> Lost: primary ダウン + 半数以下
+    Degraded --> Incomplete: 正常レプリカが replicas/2 未満
+
+    Failed --> Degraded: failover 成功 (一部未復旧)
+    Failed --> Healthy: failover + 全レプリカ復旧
+    Failed --> Lost: さらにレプリカ喪失
+
+    Lost --> [*]: バックアップから復元するしかない
+  </pre>
+  <p class="src">遷移条件の根拠: clustering/status.go の isHealthy / isDegraded / isFailed / isLost。<code>replicas/2</code> は整数除算（replicas=3 → 1, replicas=5 → 2）。primary 死亡時は必ず Failed か Lost のどちらかになる</p>
+
+  <h2>switchover — 計画的な primary 交代</h2>
+  <p>primary Pod に <code>deletionTimestamp</code> が付く（ローリングアップデート等）か、<code>moco.cybozu.com/demote: true</code> アノテーションが付くとトリガーされます。候補は「正常なレプリカのうち<strong>最小 ordinal</strong>」<span class="src">status.go#needSwitch, #DecideState</span>。</p>
+  <ol>
+    <li>primary を <code>super_read_only=1</code> に。<strong>10 秒</strong>（preStop 20 秒の半分）で終わらなければ接続を KILL して待ち直す</li>
+    <li>100ms 後にもう一度接続を KILL</li>
+    <li>候補レプリカが primary の GTID に追いつくのを最大 <strong>50 秒</strong>待つ（<code>WaitForGTID</code>）</li>
+    <li><code>status.currentPrimaryIndex</code> を更新（次サイクルの configure で新 primary が書き込み可能になる）。demote アノテーションを削除</li>
+  </ol>
+  <p class="src">clustering/operations.go#switchover</p>
+
+  <h2>failover — 障害時の primary 昇格</h2>
+  <ol>
+    <li><strong>全レプリカの IO_THREAD を停止</strong> — 旧 primary が semi-sync ACK を得られなくなり書き込み不能になる（split-brain 防止）</li>
+    <li>errant でないレプリカから <code>GTID_SUBSET</code> の包含比較で<strong>最も GTID が進んだもの</strong>を選出（<code>FindTopRunner</code>）。<code>Retrieved_Gtid_Set</code> と <code>Executed_Gtid_Set</code> の和集合で比較する（failover 直後で Retrieved が空のケースに備える）</li>
+    <li>Retrieved_Gtid_Set の適用完了を最大 50 秒待ち、<code>currentPrimaryIndex</code> を更新</li>
+  </ol>
+  <div class="note">switchover は「最小 ordinal」、failover は「最も進んだ GTID」と<strong>選出基準が異なります</strong>。failover は DecideState が選んだ候補を FindTopRunner の結果で上書きします<span class="src">operations.go#failover, pkg/dbop/gtid.go#FindTopRunner</span>。</div>
+
+  <h2>configure — Degraded / Incomplete からの復旧</h2>
+  <p>冪等な復旧処理です。実行順:</p>
+  <ol>
+    <li>役割が変わった Pod（errant 含む）から <code>moco.cybozu.com/role</code> ラベルを剥がす — ユーザトラフィックを Service から外す</li>
+    <li>300ms（<code>MOCO_ROLE_WAIT_DURATION</code> で変更可）待って、該当インスタンスの接続を KILL</li>
+    <li>primary の設定: semi-sync primary を有効化。intermediate primary の場合は <code>super_read_only</code> のまま外部ソースへ<strong>非</strong> semi-sync でレプリケーション開始</li>
+    <li>各レプリカを構成（下記）</li>
+    <li>役割ラベルを付け直す（errant には付けない）</li>
+    <li>primary を書き込み可能に（<code>read_only=0</code>）、Event <code>Writable</code> を発行</li>
+  </ol>
+  <h3>configureReplica の要点</h3>
+  <ul>
+    <li><strong>CLONE の実行条件</strong>: レプリカの <code>gtid_executed</code> が空 ∧ primary の <code>gtid_executed</code> が非空 ∧ <code>ReplicaStatus</code> が nil、の 3 条件 AND。moco-agent 経由で primary から <code>CLONE INSTANCE</code> し、再起動を最大 60 秒待つ</li>
+    <li><strong>binlog 欠損の防御</strong>: <code>GTID_SUBTRACT(primary の gtid_purged, レプリカの gtid_executed)</code> が非空なら「必要な binlog が primary に無い」としてエラーで中断</li>
+    <li>errant レプリカは IO_THREAD を止めるだけで再開しない（隔離）</li>
+  </ul>
+  <p class="src">clustering/operations.go#configure, #configureReplica, #configurePrimary</p>
+
+  <h2>semi-sync と errant transaction</h2>
+  <div class="tablewrap"><table>
+    <tr><th>設定 / 挙動</th><th>値・内容</th></tr>
+    <tr><td><code>rpl_semi_sync_master_timeout</code></td><td><strong>24 時間</strong>（86400000 ms）— 非同期への劣化を事実上禁止</td></tr>
+    <tr><td><code>rpl_semi_sync_master_wait_for_slave_count</code></td><td><code>replicas / 2</code>（5 台なら 2）。<code>replicas=1</code> では semi-sync 設定なし</td></tr>
+    <tr><td>レプリケーション構文</td><td>GTID ベース（<code>SOURCE_AUTO_POSITION=1</code>）。MySQL 8.4 は <code>CHANGE REPLICATION SOURCE TO</code>、8.0 は <code>CHANGE MASTER TO</code> に自動切替</td></tr>
+    <tr><td>errant 検出</td><td>primary 上で <code>GTID_SUBTRACT(replicaGTID, primaryGTID)</code> を評価し、差分に primary 以外の UUID があれば errant。<strong>primary 自身の UUID の差分は無視</strong>（高負荷時にレプリカの gtid_executed が一時的に先行することがあるため）。primary ダウン中は <code>status.errantReplicaList</code> から復元</td></tr>
+    <tr><td>errant レプリカの扱い</td><td>レプリケーション停止のまま隔離。role ラベルを剥がして Service から外し、failover 候補からも除外。<strong>復旧はユーザが PVC + Pod を削除して再初期化</strong></td></tr>
+    <tr><td>hangup 検出</td><td>レプリカ側で <code>Rpl_semi_sync_master_wait_sessions &gt; 0</code>（レプリカが ACK 待ちしている異常）ならそのレプリカを死亡扱いに → Healthy から Degraded に落ちる</td></tr>
+  </table></div>
+  <p class="src">pkg/dbop/replication.go, clustering/status.go#containErrantTransactions</p>
+
+  <h2>落とし穴</h2>
+  <ul>
+    <li><strong>Pod が 1 つでも欠けると GatherStatus がエラーで打ち切られ、判定も操作も行われない</strong>（offline 時を除く）<span class="src">status.go#GatherStatus</span></li>
+    <li><code>spec.offline</code> は最優先判定 — Failed 状態でも offline にすれば failover は走らない</li>
+    <li><code>maxDelaySecondsForPodDeletion</code> 超過中は primary に <code>moco.cybozu.com/prevent-delete</code> が付き、<strong>switchover も保留</strong>される</li>
+    <li>switchover のタイムアウトは 10 秒固定（preStop 20 秒 ÷ 2）。超えると failover 経路に落ちうる</li>
+    <li>mysqld への接続は connTimeout 5s / readTimeout 1m。落ちたインスタンスがあると 1 サイクルに 3 秒 × 3 回のリトライ分の待ちが入る</li>
+  </ul>
+
+  <div class="pagefoot">source: <a href="https://github.com/cybozu-go/moco/tree/main/clustering">clustering/</a> · <a href="https://github.com/cybozu-go/moco/tree/main/pkg/dbop">pkg/dbop/</a> · <a href="https://github.com/cybozu-go/moco/blob/main/docs/clustering.md">docs/clustering.md</a></div>
+</div></main>
+</div>
+</body>
+</html>

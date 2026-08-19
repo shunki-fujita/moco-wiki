@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>運用ノート — MOCO Wiki</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script type="module" src="assets/wiki.js"></script>
+</head>
+<body>
+<div class="app">
+<nav class="sidebar">
+  <div class="brand">
+    <a href="index.html"><div class="name">MOCO<span class="dot">.</span>wiki</div></a>
+    <div class="sub">llm-generated from source</div>
+  </div>
+  <div class="nav-group">User Guide</div>
+  <a class="nav" href="index.html">概要</a>
+  <a class="nav" href="architecture.html">アーキテクチャ</a>
+  <a class="nav" href="crd.html">CRD リファレンス</a>
+  <div class="nav-group">Internals</div>
+  <a class="nav" href="clustering.html">クラスタリングと failover</a>
+  <a class="nav" href="reconcile.html">Reconcile の仕組み</a>
+  <a class="nav" href="backup.html">バックアップとリストア</a>
+  <a class="nav" href="pod.html">Pod と my.cnf</a>
+  <a class="nav" href="moco-agent.html">moco-agent</a>
+  <div class="nav-group">Operations</div>
+  <a class="nav active" href="operations.html">運用ノート</a>
+  <div class="nav-group">Development</div>
+  <a class="nav" href="development.html">開発とテスト</a>
+  <div class="meta">
+    <a href="https://github.com/cybozu-go/moco">cybozu-go/moco</a> @ main<br>
+    <a href="https://github.com/cybozu-go/moco-agent">moco-agent</a> @ main<br>
+    generated 2026-08-19
+  </div>
+</nav>
+
+<main><div class="content">
+  <p class="eyebrow">Operations</p>
+  <h1>運用ノート</h1>
+  <p class="lede">日常運用で使うインタフェースと、コードから読み取れる実務上の注意点。</p>
+
+  <h2>kubectl-moco</h2>
+  <div class="tablewrap"><table>
+    <tr><th>コマンド</th><th>内容</th></tr>
+    <tr><td><code>kubectl moco mysql CLUSTER -- ...</code></td><td>mysqld コンテナに <strong>exec</strong> して mysql クライアントを実行（port-forward ではない）。パスワードは Pod にマウント済みの <code>/mysql-credentials/&lt;user&gt;-my.cnf</code> を <code>--defaults-extra-file</code> で読むため、手元には降りてこない。<code>-u</code>（既定 moco-readonly）、<code>--index</code>（既定 primary）、<code>-i</code> / <code>-t</code></td></tr>
+    <tr><td><code>kubectl moco credential CLUSTER</code></td><td>Secret からパスワードを取得。<code>--format plain</code>（既定）または <code>--format mycnf</code>（<code>[client]</code> セクション形式）。対象は moco-readonly / moco-writable / moco-admin のみ</td></tr>
+    <tr><td><code>kubectl moco switchover CLUSTER</code></td><td>現 primary Pod に <code>moco.cybozu.com/demote: true</code> を patch するだけ。offline クラスタと replicas=1 では拒否</td></tr>
+    <tr><td><code>kubectl moco stop|start clustering CLUSTER</code></td><td>failover 等の自動操作を停止/再開（gtid を手で揃えたいときなど）</td></tr>
+    <tr><td><code>kubectl moco stop|start reconciliation CLUSTER</code></td><td>リソース reconcile を停止/再開</td></tr>
+  </table></div>
+  <p class="src">cmd/kubectl-moco/。インストールは krew (<code>kubectl krew install moco</code>) または GitHub releases。docs/install-plugin.md のヘルプ出力例には start/stop が載っていない（ドキュメントが古い）</p>
+
+  <h2>制御用アノテーション</h2>
+  <div class="tablewrap"><table>
+    <tr><th>アノテーション</th><th>対象</th><th>効果</th></tr>
+    <tr><td><code>moco.cybozu.com/demote: "true"</code></td><td>Pod</td><td>switchover をトリガー</td></tr>
+    <tr><td><code>moco.cybozu.com/clustering-stopped: "true"</code></td><td>MySQLCluster</td><td>ClusterManager を Pause。Available/Healthy が Unknown、メトリクスは NaN になる</td></tr>
+    <tr><td><code>moco.cybozu.com/reconciliation-stopped: "true"</code></td><td>MySQLCluster</td><td>reconcile を停止（リソース生成が全てスキップ）</td></tr>
+    <tr><td><code>moco.cybozu.com/force-rolling-update: "true"</code></td><td>MySQLCluster</td><td>partition 制御をバイパスして通常のローリングアップデート</td></tr>
+    <tr><td><code>moco.cybozu.com/prevent-delete: "true"</code></td><td>Pod（MOCO が自動付与）</td><td><code>maxDelaySecondsForPodDeletion</code> 超過中の primary 削除ブロック。<strong>docs に解説ページが無い機能</strong>（実装と e2e はある）</td></tr>
+  </table></div>
+  <p class="src">pkg/constants/meta.go</p>
+
+  <h2>MySQL バージョンアップ</h2>
+  <p>手順は 3 つだけ: ① クラスタが Healthy か確認 → ② リリースノートで非互換確認（可能ならバックアップも）→ ③ <code>podTemplate</code> の mysqld イメージを書き換え。あとは <a href="reconcile.html">partition 制御</a>が ordinal の大きい方から 1 台ずつ安全に更新します。</p>
+  <ul>
+    <li><strong>ダウングレードは絶対にしない</strong> — MySQL 8.0 以降はデータディクショナリのバージョンが上がるとダウングレード不可</li>
+    <li>「replica は source と同じか新しいバージョン」の制約を、switchover 先を<strong>最小 ordinal（= 未更新側）</strong>にすることで満たしている</li>
+    <li>アップグレード時のデータ更新に時間がかかるため startupProbe は既定 1 時間待つ（<code>startupWaitSeconds: 3600</code>）</li>
+    <li>制約: アップグレード中にインスタンスが落ちると更新済みインスタンスが primary に選ばれることがあり、その場合は旧 replica の再初期化が必要</li>
+  </ul>
+  <p class="src">docs/upgrading.md</p>
+
+  <h2>PVC の拡張と縮小</h2>
+  <ul>
+    <li><strong>拡張は自動</strong>: <code>spec.volumeClaimTemplates</code> のサイズを増やすだけ。StorageClass の <code>allowVolumeExpansion</code> が false だと webhook で拒否される。StatefulSet テンプレートは不変なので、controller が StatefulSet を orphan 削除 → 再作成する（Pod は残る）</li>
+    <li>online expansion 非対応のストレージでは Pod 再起動を手動で行う</li>
+    <li>pvc-autoresizer 等で実 PVC が既に大きい場合、controller は縮小方向の更新をしない</li>
+    <li><strong>縮小は手動</strong>: テンプレートを小さくした後、1 台ずつ PVC + Pod を削除 → CLONE による再作成 → Healthy を待つ、を繰り返す</li>
+  </ul>
+  <p class="src">docs/change-pvc-template.md, controllers/pvc.go</p>
+
+  <div class="caution"><strong>MySQLCluster を削除すると PVC も消えます</strong>（PVC に ownerReference が付いている）。データを残したい場合は削除前に PVC の <code>metadata.ownerReferences</code> を外すこと。</div>
+
+  <h2>見るべきメトリクス</h2>
+  <div class="tablewrap"><table>
+    <tr><th>メトリクス</th><th>意味</th></tr>
+    <tr><td><code>moco_cluster_available</code> / <code>moco_cluster_healthy</code></td><td>Available / Healthy condition。healthy=0 が続いたらレプリカ障害か errant</td></tr>
+    <tr><td><code>moco_cluster_switchover_total</code> / <code>failover_total</code></td><td>交代回数。failover の増加は要調査</td></tr>
+    <tr><td><code>moco_cluster_errant_replicas</code></td><td>0 以外なら該当レプリカの再初期化が必要</td></tr>
+    <tr><td><code>moco_cluster_clustering_stopped</code> / <code>reconciliation_stopped</code></td><td>止めっぱなしの検知に</td></tr>
+    <tr><td><code>moco_cluster_volume_resized_total</code> / <code>statefulset_recreate_total</code></td><td>PVC リサイズ / StatefulSet 再作成の記録（<code>_errors_total</code> も）</td></tr>
+    <tr><td><code>moco_backup_timestamp</code> / <code>moco_backup_warnings</code></td><td>バックアップの鮮度と警告（binlog スキップ等）</td></tr>
+    <tr><td><code>moco_instance_replication_delay_seconds</code></td><td>agent 発のレプリカ遅延。<strong>primary では存在しない</strong>（動的登録のため）</td></tr>
+  </table></div>
+  <p>Helm の <code>monitoring.enabled=true</code> で controller / agent / mysqld-exporter の PodMonitor が 3 つ作られます。</p>
+
+  <h2>読み書きの止め方（メンテナンス）</h2>
+  <ul>
+    <li>クラスタを read-only にしたい: <code>kubectl moco stop clustering</code> してから <code>SET GLOBAL super_read_only=1</code>。clustering が動いていると MOCO が primary を writable に戻してしまう</li>
+    <li>計算資源を解放したい（データは残す）: <code>spec.offline: true</code> — StatefulSet が 0 replica になる</li>
+  </ul>
+
+  <h2>トラブル時のチェックリスト</h2>
+  <ul>
+    <li><strong>クラスタが Lost</strong> — 自動復旧はありません。<code>spec.restore</code> 付きの新クラスタを作ってバックアップから復元</li>
+    <li><strong>errant replica が出た</strong> — 該当 index の PVC と Pod を削除して再初期化（CLONE で復旧される）。<code>kubectl delete --wait=false pvc mysql-data-moco-&lt;name&gt;-&lt;i&gt;</code> → <code>kubectl delete --grace-period=1 pod moco-&lt;name&gt;-&lt;i&gt;</code>。StatefulSet controller が PVC 削除前に pending Pod を作ることがあるので消し続ける</li>
+    <li><strong>操作が何も起きない</strong> — Pod が 1 つでも欠けていると ClusterManager は判定を打ち切る。まず Pod を replicas 数まで戻す</li>
+    <li><strong>ローリングアップデートが進まない</strong> — partition 制御はクラスタが Healthy のときしか進まない。<code>Healthy</code> / <code>ClusteringActive</code> condition と Pod の状態を確認</li>
+    <li><strong>Pod が Ready にならない</strong> — Ready の実体は moco-agent の <code>/readyz</code>。クローン中 / レプリケーションスレッド停止 / 遅延超過 / 起動直後でトランザクション未受信、のどれかで 503 になる（<a href="moco-agent.html">moco-agent</a> 参照）</li>
+    <li><strong>バックアップが失敗する</strong> — offline でないか、Pod 数が replicas と一致しているか、workVolume の容量を確認</li>
+  </ul>
+
+  <div class="pagefoot">source: <a href="https://github.com/cybozu-go/moco/blob/main/docs/usage.md">docs/usage.md</a> · <a href="https://github.com/cybozu-go/moco/blob/main/docs/kubectl-moco.md">docs/kubectl-moco.md</a> · <a href="https://github.com/cybozu-go/moco/blob/main/docs/metrics.md">docs/metrics.md</a> · <a href="https://github.com/cybozu-go/moco/blob/main/docs/upgrading.md">docs/upgrading.md</a> · <a href="https://github.com/cybozu-go/moco/blob/main/docs/change-pvc-template.md">docs/change-pvc-template.md</a></div>
+</div></main>
+</div>
+</body>
+</html>

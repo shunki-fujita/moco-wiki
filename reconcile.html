@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reconcile の仕組み — MOCO Wiki</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script type="module" src="assets/wiki.js"></script>
+</head>
+<body>
+<div class="app">
+<nav class="sidebar">
+  <div class="brand">
+    <a href="index.html"><div class="name">MOCO<span class="dot">.</span>wiki</div></a>
+    <div class="sub">llm-generated from source</div>
+  </div>
+  <div class="nav-group">User Guide</div>
+  <a class="nav" href="index.html">概要</a>
+  <a class="nav" href="architecture.html">アーキテクチャ</a>
+  <a class="nav" href="crd.html">CRD リファレンス</a>
+  <div class="nav-group">Internals</div>
+  <a class="nav" href="clustering.html">クラスタリングと failover</a>
+  <a class="nav active" href="reconcile.html">Reconcile の仕組み</a>
+  <a class="nav" href="backup.html">バックアップとリストア</a>
+  <a class="nav" href="pod.html">Pod と my.cnf</a>
+  <a class="nav" href="moco-agent.html">moco-agent</a>
+  <div class="nav-group">Operations</div>
+  <a class="nav" href="operations.html">運用ノート</a>
+  <div class="nav-group">Development</div>
+  <a class="nav" href="development.html">開発とテスト</a>
+  <div class="meta">
+    <a href="https://github.com/cybozu-go/moco">cybozu-go/moco</a> @ main<br>
+    <a href="https://github.com/cybozu-go/moco-agent">moco-agent</a> @ main<br>
+    generated 2026-08-19
+  </div>
+</nav>
+
+<main><div class="content">
+  <p class="eyebrow">Internals</p>
+  <h1>Reconcile の仕組み</h1>
+  <p class="lede">MySQLClusterReconciler は Server-Side Apply（field manager <code>moco-controller</code>）で子リソースを管理し、StatefulSet の更新は専用の webhook + Reconciler の組で「partition を 1 つずつ下げる」安全なローリングアップデートに変換されます。</p>
+
+  <h2>moco-controller に載っているもの</h2>
+  <div class="tablewrap"><table>
+    <tr><th>要素</th><th>役割</th></tr>
+    <tr><td><code>MySQLClusterReconciler</code></td><td>子リソース一式の生成・更新（下記 12 ステップ）</td></tr>
+    <tr><td><code>StatefulSetPartitionReconciler</code></td><td>クラスタが Healthy かつ Pod が rollout-ready のときだけ partition を 1 つずつ下げる（rate limiter 付き）</td></tr>
+    <tr><td><code>PodWatcher</code></td><td>Pod の削除・<code>demote</code> アノテーションを検知して ClusterManager に通知</td></tr>
+    <tr><td><code>ClusterManager</code></td><td><a href="clustering.html">クラスタリング</a>の維持ループ（Reconciler ではなく常駐 goroutine 群）</td></tr>
+    <tr><td>Webhook ×4</td><td>MySQLCluster (mutating + validating) / BackupPolicy (validating) / StatefulSet (mutating)</td></tr>
+    <tr><td><code>cert.Reloader</code></td><td>gRPC クライアント証明書の定期リロード（1 時間ごと）</td></tr>
+  </table></div>
+  <p class="src">cmd/moco-controller/cmd/run.go#subMain</p>
+
+  <h2>reconcileV1 の 12 ステップ</h2>
+  <pre class="block"><code> 1. Secret        controller Secret (moco-system) → user Secret → my.cnf Secret
+ 2. Certificate   cert-manager Certificate (moco-agent-&lt;ns&gt;.&lt;name&gt;)
+ 3. gRPC Secret   証明書をクラスタ namespace へコピー (moco-&lt;name&gt;-grpc)
+ 4. my.cnf ConfigMap        内容ハッシュ付きの名前で生成
+ 5. fluent-bit ConfigMap    slow-log サイドカー用
+ 6. ServiceAccount
+ 7. Service ×3    headless / primary / replica
+ 8. PVC           リサイズ + ラベル/アノテーション同期
+ 9. StatefulSet   offline なら replicas=0
+10. PDB           maxUnavailable = replicas/2（バックアップ実行中は 0）
+11. backup CronJob + Role/RoleBinding
+12. restore Job + Role/RoleBinding
+→ 最後に ClusterManager.Update() でクラスタリングのループを起動/更新</code></pre>
+  <p class="src">controllers/mysqlcluster_controller.go#reconcileV1</p>
+  <p>削除時は finalizer <code>moco.cybozu.com/mysqlcluster</code> の処理として、ClusterManager の停止、moco-system 側の controller Secret と Certificate の削除、メトリクスのラベル削除が行われます。<code>moco.cybozu.com/reconciliation-stopped: "true"</code> が付いている間はステップ全体がスキップされます。</p>
+
+  <h2>生成されるリソースの要点</h2>
+  <div class="tablewrap"><table>
+    <tr><th>リソース</th><th>要点</th></tr>
+    <tr><td>my.cnf ConfigMap</td><td>名前に内容の FNV-1a ハッシュが付く（<code>moco-&lt;name&gt;.&lt;hash&gt;</code>）。内容変更 = 新 ConfigMap 作成 → StatefulSet の volume 参照が変わり更新が走る。古い世代は <code>--mysql-configmap-history-limit</code>（既定 10）個まで保持</td></tr>
+    <tr><td>StatefulSet</td><td><code>PodManagementPolicy=Parallel</code>。offline 時は replicas 0。デフォルトで hostname 分散の podAntiAffinity（ユーザ指定があればそちら優先）。<code>terminationGracePeriodSeconds</code> 既定 300</td></tr>
+    <tr><td>PDB</td><td><code>maxUnavailable = replicas/2</code>。<strong>backup CronJob 実行中は 0 になる</strong>。replicas &lt; 3 または offline では削除される</td></tr>
+    <tr><td>PVC</td><td>StatefulSet の PVC テンプレートは不変なので、拡張時は PVC を直接書き換え → StatefulSet を orphan 削除 → 再作成する。<code>--pvc-sync-annotation-keys</code> / <code>--pvc-sync-label-keys</code> で指定したメタデータも同期</td></tr>
+    <tr><td>headless Service</td><td><code>publishNotReadyAddresses=true</code>。primary / replica Service は <code>moco.cybozu.com/role</code> ラベルセレクタで振り分け</td></tr>
+  </table></div>
+
+  <h2>Server-Side Apply と差分抑制</h2>
+  <p>すべての子リソースは apply configuration で宣言し、<code>client.FieldOwner("moco-controller")</code> + <code>ForceOwnership</code> の SSA で適用します。適用前に現在値から自分の所有フィールドを extract して期待値と比較し、<strong>等価なら apply 自体をスキップ</strong>します（<code>ErrApplyConfigurationNotChanged</code>）。これで resourceVersion の無駄な更新と reconcile ループの自己発火を防いでいます<span class="src">mysqlcluster_controller.go#apply</span>。</p>
+
+  <h2>安全なローリングアップデート（partition 制御）</h2>
+  <p>MySQLCluster 所有の StatefulSet に対して mutating webhook（<code>/mutate-apps-v1-statefulset</code>）が介入します<span class="src">api/v1beta2/statefulset_webhhok.go</span>:</p>
+  <ol>
+    <li>spec 変更時、<code>rollingUpdate.partition = replicas</code> にセット（= 全 Pod の更新を止めた状態から開始）</li>
+    <li><code>StatefulSetPartitionReconciler</code> が「クラスタが Healthy かつ Pod が rollout-ready」のときだけ partition を 1 つずつ下げる</li>
+    <li>partition <em>だけ</em>の変更はそのまま通す。他の spec 変更が同時に入ると partition をリセットして最初からやり直し</li>
+    <li>更新は ordinal の大きい Pod（= replica）から進み、primary Pod の番になると Terminating を検知した ClusterManager が switchover してから更新が進む</li>
+  </ol>
+  <pre class="mermaid">
+sequenceDiagram
+    participant U as ユーザ / MOCO
+    participant W as StatefulSet webhook
+    participant P as PartitionReconciler
+    participant S as StatefulSet
+    U->>S: spec 変更 (イメージ更新等)
+    W->>S: partition = replicas に設定 (更新を全停止)
+    loop クラスタが Healthy の間
+        P->>S: partition を 1 下げる
+        S->>S: 最大 ordinal の未更新 Pod を再作成
+        Note over S: primary の番になったら<br/>switchover してから続行
+    end
+  </pre>
+  <p><code>moco.cybozu.com/force-rolling-update: "true"</code> アノテーションでこの機構をバイパスし、通常のローリングアップデートに戻せます。</p>
+
+  <h2>Reconciler バージョニング</h2>
+  <p><code>status.reconcileInfo.reconcileVersion</code> を見て、既存 generation には古いバージョンの reconcile ロジックを使い続けます。これにより <strong>MOCO 自体の更新では mysqld Pod が再起動しません</strong>（spec を変更したときに初めて新ロジックが適用される）<span class="src">mysqlcluster_controller.go#Reconcile, docs/reconcile.md</span>。</p>
+
+  <h2>moco-controller の主要フラグ</h2>
+  <div class="tablewrap"><table>
+    <tr><th>フラグ</th><th>デフォルト</th><th>意味</th></tr>
+    <tr><td><code>--check-interval</code></td><td>1m</td><td>クラスタリングの巡回間隔</td></tr>
+    <tr><td><code>--max-concurrent-reconciles</code></td><td>8</td><td>3 つの Reconciler すべてに適用</td></tr>
+    <tr><td><code>--mysql-configmap-history-limit</code></td><td>10</td><td>my.cnf ConfigMap の保持世代数</td></tr>
+    <tr><td><code>--partition-update-interval</code></td><td>0</td><td>partition を下げる間隔の rate limit</td></tr>
+    <tr><td><code>--apiserver-qps-throttle</code></td><td>20</td><td>kube-apiserver への QPS（Burst は 1.5 倍）</td></tr>
+    <tr><td><code>--agent-image</code> / <code>--backup-image</code> ほか</td><td>go.mod / version.go から解決</td><td>サイドカー・バックアップイメージ</td></tr>
+    <tr><td><code>--disable-default-security-context</code></td><td>false</td><td>OpenShift 等で既定 securityContext を無効化</td></tr>
+  </table></div>
+  <p>必須環境変数: <code>POD_NAMESPACE</code>（leader election と controller Secret の置き場所になる）。</p>
+
+  <div class="pagefoot">source: <a href="https://github.com/cybozu-go/moco/tree/main/controllers">controllers/</a> · <a href="https://github.com/cybozu-go/moco/tree/main/api/v1beta2">api/v1beta2/</a> · <a href="https://github.com/cybozu-go/moco/blob/main/docs/reconcile.md">docs/reconcile.md</a> · <a href="https://github.com/cybozu-go/moco/blob/main/docs/rolling-update-strategy.md">docs/rolling-update-strategy.md</a></div>
+</div></main>
+</div>
+</body>
+</html>
