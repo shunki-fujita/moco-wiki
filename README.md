@@ -1,24 +1,31 @@
 # moco-wiki
 
-[cybozu-go/moco](https://github.com/cybozu-go/moco) と [cybozu-go/moco-agent](https://github.com/cybozu-go/moco-agent) のソースコード（main ブランチ）を LLM が読んで生成した内部構造 wiki。
+[cybozu-go/moco](https://github.com/cybozu-go/moco) と [cybozu-go/moco-agent](https://github.com/cybozu-go/moco-agent) のソースコード（main ブランチ）を LLM が読んで生成・保守する wiki。
+[karpathy/llm-wiki パターン](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)に従う。
 
-- 生成元: moco @ 40f54d72 (v0.36.0) / moco-agent @ a649f51 (v0.16.0)
-- 生成日: 2026-08-19
+**入口: [index.md](index.md)**（全ページの目録）
 
-## 構成
+## 構造
 
-ビルド不要の静的 HTML。`index.html` がトップページ。図は hand-authored SVG と mermaid（CDN から読み込み）で描画。
+| ファイル | 役割 |
+|---|---|
+| [CLAUDE.md](CLAUDE.md) | Schema — ページ規約と Ingest / Query / Lint のワークフロー。エージェントはここから読む |
+| [sources.md](sources.md) | Raw sources — 取り込み済みリポジトリと commit の登録簿 |
+| [index.md](index.md) | 全ページの目録（一行要約付き） |
+| [log.md](log.md) | 追記専用の操作記録 |
+| `pages/*.md` | wiki 本体。1 ページ 1 概念、frontmatter 付き |
 
-## ローカルで見る
+## 閲覧
 
-```console
-$ python3 -m http.server -d . 8000
-# → http://localhost:8000
+GitHub 上でそのまま読む（mermaid 図もレンダリングされる）。Obsidian で `~/moco-wiki` を vault として開いてもよい。
+
+## 更新
+
+Claude Code をこのディレクトリで起動して依頼する。CLAUDE.md が schema として自動で読み込まれる。
+
 ```
-
-## GitHub Pages で公開する
-
-1. push する
-2. リポジトリの Settings → Pages → Source を `Deploy from a branch`、Branch を `main` / `/ (root)` に設定
-
-`.nojekyll` を置いてあるので Jekyll 処理はスキップされる。
+# 例
+「moco の main が進んだので Ingest して」
+「switchover と failover の違いを教えて」   # Query
+「Lint して」
+```
