@@ -41,7 +41,7 @@ last_updated: 2026-08-19
 1. `git log <旧commit>..<新commit>` と `git diff --stat` で変更領域を把握する
 2. 変更領域に対応するページを特定し（index.md の一行要約を手がかりに）、**差分だけ読んで**該当ページを更新する。新概念は新ページに切り出す
 3. 更新した全ページの frontmatter（`sources` の commit と `last_updated`）を更新する
-4. [sources.md](sources.md) の commit を進める
+4. [sources.md](sources.md) の commit を進め、README.md 先頭のバージョンバッジ（shields.io、バージョンと commit を表示）も更新する
 5. [log.md](log.md) に追記する（形式は下記）
 6. index.md の一行要約が古くなっていたら直す
 

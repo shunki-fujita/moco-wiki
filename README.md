@@ -1,5 +1,8 @@
 # moco-wiki
 
+[![moco](https://img.shields.io/badge/moco-v0.36.0_(40f54d72)-0e7490?logo=mysql&logoColor=white)](https://github.com/cybozu-go/moco/tree/40f54d72)
+[![moco-agent](https://img.shields.io/badge/moco--agent-v0.16.0_(a649f51)-0e7490?logo=mysql&logoColor=white)](https://github.com/cybozu-go/moco-agent/tree/a649f51)
+
 [cybozu-go/moco](https://github.com/cybozu-go/moco) と [cybozu-go/moco-agent](https://github.com/cybozu-go/moco-agent) のソースコード（main ブランチ）を LLM が読んで生成・保守する wiki。
 [karpathy/llm-wiki パターン](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)に従う。
 
