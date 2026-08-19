@@ -86,3 +86,4 @@ MySQL ユーザはシステム用 6 種（`moco-admin`, `moco-agent`, `moco-repl
 - [clustering-states](clustering-states.md) — ClusterManager の維持ループ
 - [reconcile](reconcile.md) — Reconciler の詳細
 - [pod-anatomy](pod-anatomy.md) — Pod の中身
+- [security](security.md) — mTLS・パスワード・RBAC の横断ガイド

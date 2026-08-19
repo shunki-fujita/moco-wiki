@@ -20,6 +20,7 @@ Lint 操作で見つけた食い違いはここに追記する（解消された
 | 3 | 未報告 | `docs/install-plugin.md` の `kubectl moco -h` 出力例に `start` / `stop` サブコマンドが載っていない |
 | 4 | 未報告 | `docs/clustering.md` に `Offline` 状態が未記載（実装 `clustering/status.go` には存在） |
 | 5 | 未報告 | `spec.maxDelaySecondsForPodDeletion` と `moco.cybozu.com/prevent-delete` アノテーション: 実装 + e2e（`e2e/prevent_delete_test.go`）はあるが docs に解説ページが無い |
+| 9 | 未報告 | `docs/metrics.md` は moco_cluster_* の全メトリクスに `name`/`namespace` ラベルがあると記載だが、`moco_cluster_partition_update_retries_total` だけラベルが `namespace` のみ（`pkg/metrics/metrics.go#Register` の PartitionUpdateRetriesTotalVec） |
 
 ## cybozu-go/moco-agent
 

@@ -19,7 +19,7 @@ last_updated: 2026-08-19
 | フルダンプ | `mysqlsh util dump-instance`。`LOCK INSTANCE FOR BACKUP` により DDL のみブロック（DML は止まらない）、mysqldump より大幅に高速。zstd 圧縮 → tar でバケットへ（`pkg/bkop/backup.go#DumpFull`） |
 | 増分 (binlog) | `mysqlbinlog --read-from-remote-master=BINLOG-DUMP-GTIDS --exclude-gtids=<前回の GTID>`。tar + zstd。**2 回目以降のバックアップでのみ**取得（`pkg/bkop/backup.go#DumpBinlog`） |
 | ソース Pod | 初回はレプリカ優先（なければ primary）。2 回目以降は `server_uuid` が前回から変わっていない Pod のみ増分対象。全 Pod の uuid が変わっていたら binlog をスキップして full のみ + warning（`backup/backup.go#ChoosePod`） |
-| 保存先 | S3 / GCS / Azure Blob（`backendType`）。MinIO 等の S3 互換も可。1 バケットを複数クラスタで共有できる |
+| 保存先 | S3 / GCS / Azure Blob（`backendType` → [object-storage](object-storage.md)）。MinIO 等の S3 互換も可。1 バケットを複数クラスタで共有できる |
 | キー形式 | `moco/<ns>/<name>/YYYYMMDD-hhmmss/dump.tar` と `binlog.tar.zst`。binlog のキー日時は**前回バックアップ時刻**（`backup/key.go`） |
 | 実行ユーザ | backup は `moco-backup`、restore は `moco-admin`。パスワードは `MYSQL_PASSWORD` 環境変数で注入 |
 
@@ -67,4 +67,5 @@ flowchart LR
 ## 関連
 
 - [crd-backuppolicy](crd-backuppolicy.md) — JobConfig / BucketConfig の仕様
+- [object-storage](object-storage.md) — バケット抽象と認証の実装
 - [operations](operations.md) — Lost からの復旧手順

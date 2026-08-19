@@ -4,8 +4,11 @@ sources:
   - moco@40f54d72:cmd/kubectl-moco/
   - moco@40f54d72:docs/usage.md
   - moco@40f54d72:docs/change-pvc-template.md
-  - moco@40f54d72:docs/metrics.md
+  - moco@40f54d72:docs/known_issues.md
   - moco@40f54d72:pkg/constants/meta.go
+  - moco@40f54d72:pkg/event/event.go
+  - moco@40f54d72:docs/designdoc/clustering_stop.md
+  - moco@40f54d72:docs/designdoc/support_reduce_volume_size.md
 last_updated: 2026-08-19
 ---
 
@@ -37,6 +40,27 @@ last_updated: 2026-08-19
 
 根拠: `pkg/constants/meta.go`
 
+## Kubernetes Events 一覧
+
+トラブル時は `kubectl describe mysqlcluster` / `kubectl get events` でまずこれを見る。定義は `pkg/event/event.go`、発行元は ClusterManager（維持ループ）とバックアップ / リストア Job。
+
+| Reason | Type | 意味 |
+|---|---|---|
+| `SwitchOver` / `SwitchOverFailed` | Normal / Warning | 計画的な primary 交代の成否（成功時は新 primary の index 付き） |
+| `FailOver` / `FailOverFailed` | Normal / Warning | 障害時 failover の成否 |
+| `Cloned` / `CloneFailed` | Normal / Warning | レプリカ再作成時の CLONE の成否（instance index 付き） |
+| `InitCloned` / `InitCloneFailed` | Normal / Warning | 外部 MySQL からの初期 CLONE（intermediate primary）の成否 |
+| `Writable` | Normal | configure 完了で primary が書き込み可能になった |
+| `BackupCreated` / `BackupNoBinlog` | Normal / Warning | バックアップ成功 / binlog 抜きで成功（[backup-restore](backup-restore.md)） |
+| `Restored` | Normal | リストア完了 |
+| `PartitionUpdate` | Normal | **StatefulSet に対して**発行。partition を 1 下げた（`controllers/partition_controller.go`） |
+
+バックアップ / リストア Job は controller を経由せず Event オブジェクトを直接 create する（Job の Role に events create 権限があるのはこのため → [security](security.md)）。
+
+## 既知の問題
+
+`docs/known_issues.md` に登録されているのは 1 件のみで解消済み（8.0.25 以前でのマルチスレッドレプリケーションのクラッシュ復帰問題。現在サポートされる MySQL バージョンでは発生しない）。
+
 ## PVC の拡張と縮小
 
 - **拡張は自動**: `spec.volumeClaimTemplates` のサイズを増やすだけ。StorageClass の `allowVolumeExpansion` が false だと webhook で拒否。StatefulSet テンプレートは不変なので controller が orphan 削除 → 再作成する（Pod は残る）
@@ -46,9 +70,13 @@ last_updated: 2026-08-19
 
 根拠: `docs/change-pvc-template.md`, `controllers/pvc.go`
 
+設計経緯: 拡張の自動化は `docs/designdoc/support_apply_pvc_template_changes.md`（PVC メタデータの書き換えを自動化しないのは他コントローラとの競合を避けるため。失敗は `moco_cluster_volume_resized_errors_total` / `statefulset_recreate_errors_total` が reconcile ごとに増え続けることで検知する設計）。縮小の半自動手順は `docs/designdoc/support_reduce_volume_size.md`（縮小の全自動化は明示的に non-goal）。
+
 > **Warning** **MySQLCluster を削除すると PVC も消える**（PVC に ownerReference が付く）。データを残すには削除前に PVC の `metadata.ownerReferences` を外すこと（`docs/usage.md`）。
 
 ## 見るべきメトリクス
+
+アラート向けの最小セット。全メトリクスの一覧は [metrics](metrics.md) を参照。
 
 | メトリクス | 意味 |
 |---|---|
@@ -65,6 +93,7 @@ Helm の `monitoring.enabled=true` で controller / agent / mysqld-exporter の 
 ## 読み書きの止め方（メンテナンス）
 
 - クラスタを read-only にしたい: `kubectl moco stop clustering` してから `SET GLOBAL super_read_only=1`。clustering が動いていると MOCO が primary を writable に戻してしまう
+  - clustering 停止機能の元々のユースケースは「レプリカの SQL スレッドを止めて手動で GTID を揃える整合性チェック」（`docs/designdoc/clustering_stop.md`）。停止中にクラスタを壊した場合の復旧は保証されない（non-goal と明記）
 - 計算資源を解放したい（データは残す）: `spec.offline: true` — StatefulSet が 0 replica になる
 
 ## トラブル時のチェックリスト
@@ -80,3 +109,5 @@ Helm の `monitoring.enabled=true` で controller / agent / mysqld-exporter の 
 
 - [rolling-update](rolling-update.md) — MySQL バージョンアップ手順
 - [backup-restore](backup-restore.md) — バックアップ運用
+- [metrics](metrics.md) — メトリクスの全一覧
+- [security](security.md) — Secret / 権限まわりの全体像

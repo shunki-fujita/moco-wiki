@@ -16,7 +16,7 @@ API グループは `moco.cybozu.com/v1beta2` のみ（storage version）。CRD 
 | フィールド | デフォルト | 意味 / 制約 |
 |---|---|---|
 | `replicas` | 1 | インスタンス数。**正の奇数のみ**、最大 5。**減らすことは禁止**（webhook で拒否） |
-| `podTemplate` | 必須 | mysqld Pod のテンプレート。`mysqld` コンテナ必須。システムコンテナ名・ポート・volume 名は予約済み。`overwriteContainers` でシステムコンテナの resources / securityContext のみ上書き可 |
+| `podTemplate` | 必須 | mysqld Pod のテンプレート。`mysqld` コンテナ必須。システムコンテナ名・ポート・volume 名は予約済み。`overwriteContainers` でシステムコンテナの resources / securityContext のみ上書き可 → [custom-containers](custom-containers.md) |
 | `volumeClaimTemplates` | 必須 | `mysql-data` という名前の claim が必須。各 claim に storage requests 必須 |
 | `primaryServiceTemplate` / `replicaServiceTemplate` | nil | primary / replica Service の annotations / labels / spec を上書き |
 | `mysqlConfigMapName` | nil | ユーザ定義 my.cnf の ConfigMap 名（[mycnf](mycnf.md) 参照） |

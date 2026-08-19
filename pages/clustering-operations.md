@@ -75,4 +75,5 @@ primary Pod に `deletionTimestamp` が付く（ローリングアップデー�
 ## 関連
 
 - [clustering-states](clustering-states.md) — どの状態でどの操作が走るか
+- [dbop](dbop.md) — ここで使う SQL 操作の実装（FindTopRunner / KillConnections 等）
 - [rolling-update](rolling-update.md) — switchover がローリングアップデートに組み込まれる仕組み

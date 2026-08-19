@@ -108,4 +108,5 @@ clustering 停止時（Pause）は Available / Healthy が Unknown になり、�
 ## 関連
 
 - [clustering-operations](clustering-operations.md) — 各状態で実行される操作の実装
+- [dbop](dbop.md) — GatherStatus が使う SQL 操作層
 - [moco-agent](moco-agent.md) — Pod Ready の実体（readiness probe）

@@ -55,3 +55,4 @@ status を持たない spec のみの namespace リソース。[MySQLCluster](cr
 ## 関連
 
 - [backup-restore](backup-restore.md) — この設定で動くバックアップの仕組み
+- [object-storage](object-storage.md) — backendType ごとの実装と認証の詳細

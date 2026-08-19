@@ -107,6 +107,8 @@ probe HTTP (:9081) は agent が提供するが、**mysqld コンテナの probe
 
 ## メトリクス（moco_instance_*）
 
+全メトリクスの一覧表は [metrics](metrics.md) にある。ここでは実装上の注意のみ。
+
 ラベルは `name`（クラスタ名）と `index`（Pod index）。`replication_delay_seconds`（readiness 判定時に更新）、`clone_count` / `clone_failure_count` / `clone_duration_seconds` / `clone_in_progress`、`log_rotation_*`。gRPC サーバメトリクス（`grpc_server_*`）も同じ `/metrics` (:8080) に出る。
 
 > **Note** `replication_delay_seconds` は動的に登録/解除されるため、primary やトランザクション未受信のレプリカでは**メトリクス自体が存在しない**。`log_rotation_count` だけ `name`/`index` ラベルが付かない（ConstLabels の指定漏れ）→ [docs-discrepancies](docs-discrepancies.md)

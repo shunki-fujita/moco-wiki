@@ -74,4 +74,5 @@ affinity 未指定時は hostname 分散の podAntiAffinity（weight 100 の pre
 
 - [mycnf](mycnf.md) — /etc/mysql/my.cnf の生成規則
 - [moco-agent](moco-agent.md) — agent / moco-init の中身
+- [custom-containers](custom-containers.md) — システムコンテナの上書きとカスタム mysqld イメージ
 - [reconcile](reconcile.md) — StatefulSet を生成する側

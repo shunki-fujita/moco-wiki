@@ -40,8 +40,8 @@ MOCO は Cybozu が開発する Kubernetes 上の MySQL オペレータで、**G
 | `clustering/` | クラスタ維持ロジックの中核。MySQLCluster ごとに 1 goroutine |
 | `controllers/` | Reconciler 群（MySQLCluster / StatefulSetPartition / PodWatcher） |
 | `backup/`, `pkg/bkop/` | バックアップ・リストア。mysqlsh / mysqlbinlog を呼ぶ |
-| `pkg/dbop/` | mysqld への SQL 操作抽象 |
-| `pkg/mycnf/`, `pkg/bucket/`, `pkg/password/` ほか | my.cnf 生成、ストレージ抽象、パスワード生成、メトリクス、定数 |
+| `pkg/dbop/` | mysqld への SQL 操作抽象 → [dbop](dbop.md) |
+| `pkg/mycnf/`, `pkg/bucket/`, `pkg/password/` ほか | my.cnf 生成、[ストレージ抽象](object-storage.md)、パスワード生成（[security](security.md)）、[メトリクス](metrics.md)、定数 |
 | `cmd/` | 3 バイナリ: `moco-controller` / `moco-backup` / `kubectl-moco` |
 | `e2e/`, `config/`, `charts/moco/`, `docs/` | E2E、kustomize、Helm、mdBook |
 
