@@ -13,7 +13,7 @@ last_updated: 2026-08-19
 
 ## なぜ backendType があるか（設計経緯）
 
-当初は S3 API のみ対応で「S3 互換ストレージなら何でも使える」建前だったが、**GCS の S3 互換 API が aws-sdk-go-v2 では動かない**（issue #427、aws-sdk-go-v2#1816）ことが判明し、プロバイダを明示的に切り替える `backendType` enum（`s3` 既定 / `gcs` / `azure`）が追加された。既定を s3 にしたのは後方互換のため（`docs/designdoc/object_storage_type.md`）。
+当初は S3 API のみ対応で「S3 互換ストレージなら何でも使える」想定だったが、**GCS の S3 互換 API が aws-sdk-go-v2 では動かない**（issue #427、aws-sdk-go-v2#1816）ことが判明し、プロバイダを明示的に切り替える `backendType` enum（`s3` 既定 / `gcs` / `azure`）が追加された。既定を s3 にしたのは後方互換のため（`docs/designdoc/object_storage_type.md`）。
 
 ## バックエンドごとの実装と認証
 

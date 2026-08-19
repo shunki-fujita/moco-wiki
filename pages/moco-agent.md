@@ -96,7 +96,7 @@ probe HTTP (:9081) は agent が提供するが、**mysqld コンテナの probe
 
 ## ログローテーション
 
-対象は **slow query log のみ**（`/var/log/mysql/mysql.slow`）。cron（既定 5 分ごと）で `mysql.slow → mysql.slow.0` に rename して `FLUSH LOCAL SLOW LOGS`。**保持は 1 世代のみ**。`logRotationSize` > 0 なら 1 秒ごとのサイズ監視でも発火（`server/rotate.go#RotateLog`）。
+対象は **slow query log のみ**（`/var/log/mysql/mysql.slow`）。cron（既定 5 分ごと）で `mysql.slow → mysql.slow.0` に rename して `FLUSH LOCAL SLOW LOGS`。**保持は 1 世代のみ**。`logRotationSize` > 0 なら 1 秒ごとのサイズ監視でもローテーションが実行される（`server/rotate.go#RotateLog`）。
 
 ## MySQL への接続の使い分け
 

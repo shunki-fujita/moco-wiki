@@ -19,14 +19,14 @@ MOCO が出す Prometheus メトリクスの全一覧。発生源は 3 つ: moco
 |---|---|---|
 | `checks_total` | Counter | 維持ループの実行回数（1 分ごと + イベント契機） |
 | `errors_total` | Counter | 維持ループのエラー回数 |
-| `available` / `healthy` | Gauge | condition の写し（1/0）。**clustering 停止中は NaN** |
+| `available` / `healthy` | Gauge | condition の値をそのまま反映（1/0）。**clustering 停止中は NaN** |
 | `switchover_total` / `failover_total` | Counter | primary 交代の回数 |
 | `replicas` / `ready_replicas` / `errant_replicas` | Gauge | インスタンス数 / Ready Pod 数 / errant 数 |
 | `processing_time_seconds` | Histogram | 1 サイクルの処理時間（バケット 0.1s〜30s） |
 | `volume_resized_total` / `volume_resized_errors_total` | Counter | PVC 拡張の成否（失敗は reconcile ごとに増え続ける） |
 | `statefulset_recreate_total` / `statefulset_recreate_errors_total` | Counter | StatefulSet 再作成の成否 |
 | `clustering_stopped` / `reconciliation_stopped` | Gauge | 停止アノテーションの状態（1/0） |
-| `current_replicas` / `updated_replicas` | Gauge | ローリングアップデートの進捗（StatefulSet の status の写し） |
+| `current_replicas` / `updated_replicas` | Gauge | ローリングアップデートの進捗（StatefulSet の status の値をそのまま反映） |
 | `last_partition_updated` | Gauge | 最後に partition を下げた時刻 |
 | `partition_update_retries_total` | Counter | partition 更新のリトライ回数。**ラベルは `namespace` のみ**（`name` なし） |
 

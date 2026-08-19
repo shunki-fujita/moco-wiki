@@ -43,7 +43,7 @@ sequenceDiagram
 
 `docs/designdoc/safe_statefulset_rolling_update.md` より。発端は実際の障害: ノード障害で Pod が 1 台落ちて Unhealthy のままローリングアップデートが走り、**StatefulSet の更新は PDB を考慮しない**ため 2 台同時ダウン → Unavailable に至った。この再発防止として「Healthy のときだけ 1 台ずつ」の partition 制御が導入された。細部の仕様:
 
-- webhook が partition をセットするのは `Initialized` condition が True のときだけ（Pod spec が壊れていて起動すらしないクラスタで更新を無限に堰き止めない）
+- webhook が partition をセットするのは `Initialized` condition が True のときだけ（Pod spec が壊れていて起動すらしないクラスタで、更新をいつまでも止め続けてしまわないため）
 - 進捗は `kubectl rollout status statefulset moco-<name>` で確認でき、partition を下げるたびに Event `PartitionUpdate` が出る（[operations](operations.md) の Events 一覧）
 - 進捗のメトリクスは `moco_cluster_current_replicas` / `updated_replicas` / `last_partition_updated`（[metrics](metrics.md)）
 

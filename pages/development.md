@@ -56,7 +56,7 @@ E2E スイート: lifecycle / replication / failover / switchover / stop / offli
 
 | 対象 | 手順 |
 |---|---|
-| MOCO 本体 | `version.go` + `kustomization.yaml` 更新 + CHANGELOG → PR → merge → `v<X.Y.Z>` タグ push で CI 発火 |
+| MOCO 本体 | `version.go` + `kustomization.yaml` 更新 + CHANGELOG → PR → merge → `v<X.Y.Z>` タグ push でリリース CI が起動 |
 | Helm チャート | 本体と独立。`Chart.yaml` / `values.yaml` の tag を更新 → `chart-v<ver>` タグ push |
 | コンテナ (mysql / fluent-bit / mysqld_exporter) | `containers/<name>/<ver>/TAG` を編集して main にマージ。**TAG を変えないと Dockerfile を変えてもリリースされない**。タグは `<upstream 版>.<イメージ版>`（例 8.4.8.1） |
 | moco-agent | 別リポジトリでリリース → moco 側で `go get github.com/cybozu-go/moco-agent@latest`（`--agent-image` 既定値は go.mod から解決） |

@@ -45,7 +45,7 @@ last_updated: 2026-08-19
 | `SHOW REPLICA STATUS` | `ReplicaStatus`。**非レプリカでは nil**（`sql.ErrNoRows` を nil に変換） |
 | `performance_schema.clone_status` の `state` | `CloneStatus`。クローン歴がなければ nil |
 
-`ReplicaStatus` は `SHOW REPLICA STATUS` の全カラムを写した巨大な構造体だが、reconcile が実際に使うのはエラー番号・`Source_Host`・`Retrieved/Executed_Gtid_Set`・IO/SQL スレッドの稼働状態だけ（型コメントに明記。`pkg/dbop/types.go#ReplicaStatus`）。
+`ReplicaStatus` は `SHOW REPLICA STATUS` の全カラムをそのまま格納する巨大な構造体だが、reconcile が実際に使うのはエラー番号・`Source_Host`・`Retrieved/Executed_Gtid_Set`・IO/SQL スレッドの稼働状態だけ（型コメントに明記。`pkg/dbop/types.go#ReplicaStatus`）。
 
 ## レプリケーション設定のバージョン分岐
 
@@ -58,7 +58,7 @@ last_updated: 2026-08-19
 `pkg/dbop/gtid.go#FindTopRunner` は全レプリカの GTID を総当たりで比較し、最も進んだものの index を返す。
 
 1. 各レプリカの `Retrieved_Gtid_Set` と `Executed_Gtid_Set` を**カンマ結合で和集合**にする（failover 直後は Retrieved が空になりうるため）
-2. 現在の首位と `GTID_SUBSET` を**双方向**に評価。どちらの部分集合でもなければ分岐がある = `ErrErrantTransactions`
+2. それまでの最有力候補と `GTID_SUBSET` を**双方向**に評価。どちらも他方の部分集合でなければ履歴が分岐している = `ErrErrantTransactions`
 3. 候補が 1 つもなければ `ErrNoTopRunner`
 
 ## KillConnections — 除外リスト方式
@@ -71,9 +71,9 @@ last_updated: 2026-08-19
 
 KILL 対象がすでに消えていた場合の ER_NO_SUCH_THREAD (1094) は無視する。つまり **`moco-readonly` / `moco-writable` を含むアプリの接続はすべて切られる**。switchover / configure での役割変更時に古い接続を確実に排除するための仕様。
 
-## 番兵エラー
+## エラーの判定方法
 
-呼び出し側は `errors.Is` で分岐する（`pkg/dbop/errors.go`）: `ErrErrantTransactions` / `ErrNoTopRunner` / `ErrTimeout`、および NopOperator の `ErrNop`。
+エラーの種類ごとに固定のエラー値（`ErrErrantTransactions` / `ErrNoTopRunner` / `ErrTimeout`、NopOperator の `ErrNop`）が定義されていて、呼び出し側は `errors.Is` で比較して処理を分岐する（`pkg/dbop/errors.go`）。
 
 ## 関連
 

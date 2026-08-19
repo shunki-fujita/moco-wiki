@@ -58,7 +58,7 @@ MySQLClusterReconciler は Server-Side Apply（field manager `moco-controller`�
 
 ## Server-Side Apply と差分抑制
 
-すべての子リソースは apply configuration で宣言し、`client.FieldOwner("moco-controller")` + `ForceOwnership` の SSA で適用する。適用前に現在値から自分の所有フィールドを extract して期待値と比較し、**等価なら apply 自体をスキップ**する（`ErrApplyConfigurationNotChanged`）。resourceVersion の無駄な更新と reconcile ループの自己発火を防ぐ（`mysqlcluster_controller.go#apply`）。
+すべての子リソースは apply configuration で宣言し、`client.FieldOwner("moco-controller")` + `ForceOwnership` の SSA で適用する。適用前に現在値から自分の所有フィールドを extract して期待値と比較し、**等価なら apply 自体をスキップ**する（`ErrApplyConfigurationNotChanged`）。resourceVersion の無駄な更新と、自分の更新がきっかけで reconcile ループが再び動いてしまうことを防ぐ（`mysqlcluster_controller.go#apply`）。
 
 ## Reconciler バージョニング
 
